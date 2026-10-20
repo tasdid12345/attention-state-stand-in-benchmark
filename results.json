@@ -1,0 +1,33 @@
+{
+  "question": "Can a class-balanced, calibrated gradient-boosting model detect a binary attention-related state from physiological sensor features more reliably than a standard random forest?",
+  "method": "Stand-in experiment on EEG Eye State: one stratified 80/20 split; random forest baseline vs. class-balanced, CV-tuned, isotonic-calibrated LightGBM; test set used only for final scoring.",
+  "dataset": {
+    "name": "EEG Eye State (OpenML 1471)",
+    "source_url": "https://archive.ics.uci.edu/dataset/264/eeg+eye+state",
+    "data_source": "uci",
+    "n_rows": 14980,
+    "n_train": 11984,
+    "n_test": 2996,
+    "same_as_paper": false,
+    "baseline_is_papers_method": false
+  },
+  "metric_name": "macro-F1 on held-out test split",
+  "higher_is_better": true,
+  "baseline": "RandomForestClassifier(n_estimators=300) on raw features, seeds 42-44",
+  "improved": "LGBMClassifier with class_weight='balanced', hyperparameters chosen by 5-fold stratified CV on train only, wrapped in isotonic CalibratedClassifierCV; seeds 42-44",
+  "metrics": {
+    "baseline_score": 0.9309032455090659,
+    "improved_score": 0.9483828395473921,
+    "improvement": 0.01747959403832622,
+    "baseline_score_std": 0.0014151813585004587,
+    "improved_score_std": 0.0,
+    "improved_cv_macro_f1": 0.9407572257572301,
+    "baseline_accuracy": 0.9319092122830441,
+    "improved_accuracy": 0.9489319092122831,
+    "baseline_brier": 0.07163515551599663,
+    "improved_brier": 0.03967403790321576,
+    "baseline_f1": 0.9225671124615015,
+    "improved_f1": 0.9430591737997767
+  },
+  "notes": "Proxy dataset: EEG eye state is not a mindful-eating or attention-labelled dataset. Results are for a single split. LightGBM with default row/column sampling is nearly deterministic, so its seed std is near zero. Raw features are used for both models; EEG readings contain known amplitude outliers that tree models tolerate. Secondary metrics are computed on the same test split and were not used for selection. Data was loaded from 'uci'; if OpenML was unavailable (HTTP 412 in CI), the same EEG Eye State data was fetched from the UCI ML Repository (id 264)."
+}
