@@ -33,6 +33,29 @@ The script writes `results.json` and `figures/macro_f1_comparison.png`.
 This is a proxy task, not an attention or mindful-eating dataset. Results come from a
 single split.
 
+## Results (latest run)
+
+On the EEG Eye State proxy dataset (not an attention-labelled dataset), a standard random forest classifier reached 93.1% macro-F1 on the held-out test split, while a class-balanced, calibrated LightGBM reached 94.8%, a small gain of 1.7 points from a single split.
+
+| Metric | Value |
+|---|---|
+| baseline_score | 0.9309 |
+| improved_score | 0.9484 |
+| improvement | 0.01748 |
+| baseline_score_std | 0.001415 |
+| improved_score_std | 0 |
+| improved_cv_macro_f1 | 0.9408 |
+| baseline_accuracy | 0.9319 |
+| improved_accuracy | 0.9489 |
+| baseline_brier | 0.07164 |
+| improved_brier | 0.03967 |
+| baseline_f1 | 0.9226 |
+| improved_f1 | 0.9431 |
+
+Run on 2026-10-20. Full output: [results.json](results.json) · [run.log](run.log)
+
+Notes: Proxy dataset: EEG eye state is not a mindful-eating or attention-labelled dataset. Results are for a single split. LightGBM with default row/column sampling is nearly deterministic, so its seed std is near zero. Raw features are used for both models; EEG readings contain known amplitude outliers that tree models tolerate. Secondary metrics are computed on the same test split and were not used for selection. Data was loaded from 'uci'; if OpenML was unavailable (HTTP 412 in CI), the same EEG Eye State data was fetched from the UCI ML Repository (id 264).
+
 ## Reference
 
 This project is motivated by the following paper:
