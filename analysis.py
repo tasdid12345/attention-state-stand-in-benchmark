@@ -23,21 +23,27 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_sp
 SEED = 42
 SEEDS = [42, 43, 44]
 OPENML_ID = 1471
+UCI_ID = 264  # same EEG Eye State data, used only as a fallback if OpenML is unreachable
 META_URL = f"https://www.openml.org/api/v1/json/data/{OPENML_ID}"
 MAX_ROWS = 200_000  # subsample guard for the 20-minute CI budget (dataset is ~15k rows)
+HEADERS = {
+    "User-Agent": "attention-state-stand-in-benchmark/1.0 (GitHub Actions CI)",
+    "Accept": "application/json, */*",
+}
 
 
 def get(url, as_json=False, retries=5):
-    """GET with timeout=60 and exponential backoff on HTTP 429/5xx and network errors."""
+    """GET with timeout=60 and exponential backoff on HTTP 412/429/5xx and network errors."""
     for attempt in range(retries):
         try:
-            r = requests.get(url, timeout=60)
+            r = requests.get(url, timeout=60, headers=HEADERS)
         except requests.RequestException as e:
             err = str(e)
         else:
             if r.status_code < 400:
                 return r.json() if as_json else r.content
-            if r.status_code != 429 and r.status_code < 500:
+            # 412 (Precondition Failed) from openml.org is treated as transient here
+            if r.status_code not in (412, 429) and r.status_code < 500:
                 r.raise_for_status()  # non-retryable client error
             err = f"HTTP {r.status_code}"
         if attempt == retries - 1:
@@ -46,20 +52,41 @@ def get(url, as_json=False, retries=5):
         time.sleep(2 ** attempt)
 
 
-def load_data():
-    """Download the ARFF file from OpenML and return features X and binary target y."""
+def _load_openml():
+    """Primary source: OpenML ARFF file."""
     meta = get(META_URL, as_json=True)["data_set_description"]
     print(f"Downloading '{meta['name']}' from OpenML (id {OPENML_ID}) ...")
     data, _ = arff.loadarff(BytesIO(get(meta["url"])))
     df = pd.DataFrame(data)
     for c in df.columns:  # nominal attributes come back as bytes
-        if df[c].dtype == object:
-            df[c] = df[c].str.decode("utf-8")
-    y = df.iloc[:, -1].astype(int).to_numpy()  # last column = eye state label
+        if df[c].map(lambda v: isinstance(v, bytes)).any():
+            df[c] = df[c].map(lambda v: v.decode("utf-8") if isinstance(v, bytes) else v)
+    y = pd.to_numeric(df.iloc[:, -1]).astype(int).to_numpy()  # last column = eye state label
     X = df.iloc[:, :-1].astype(float).to_numpy()
+    return X, y, meta["url"]
+
+
+def _load_uci():
+    """Fallback source: UCI ML Repository copy of the same EEG Eye State data."""
+    from ucimlrepo import fetch_ucirepo
+    ds = fetch_ucirepo(id=UCI_ID)
+    X = ds.data.features.astype(float).to_numpy()
+    y = pd.to_numeric(ds.data.targets.iloc[:, 0]).astype(int).to_numpy()
+    return X, y, "https://archive.ics.uci.edu/dataset/264/eeg+eye+state"
+
+
+def load_data():
+    """Return features X, binary target y, source URL and source name."""
+    try:
+        X, y, url = _load_openml()
+        source = "openml"
+    except Exception as e:  # OpenML unreachable after retries: use the UCI copy
+        print(f"OpenML download failed ({e}); falling back to UCI id {UCI_ID} (same dataset)")
+        X, y, url = _load_uci()
+        source = "uci"
     if len(y) > MAX_ROWS:  # stratified subsample for runtime safety
         X, _, y, _ = train_test_split(X, y, train_size=MAX_ROWS, stratify=y, random_state=SEED)
-    return X, y, meta["url"]
+    return X, y, url, source
 
 
 def scores(model, X_te, y_te):
@@ -75,10 +102,10 @@ def scores(model, X_te, y_te):
 
 
 def main():
-    X, y, source_url = load_data()
+    X, y, source_url, source = load_data()
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=SEED)  # split once
-    print(f"Rows: {len(y)} | train: {len(y_tr)} | test: {len(y_te)}")
+    print(f"Rows: {len(y)} | train: {len(y_tr)} | test: {len(y_te)} | source: {source}")
 
     # ---- Baseline: standard random forest on raw features, 3 seeds ----
     base = []
@@ -126,11 +153,12 @@ def main():
         "question": "Can a class-balanced, calibrated gradient-boosting model detect a binary "
                     "attention-related state from physiological sensor features more reliably "
                     "than a standard random forest?",
-        "method": "Stand-in experiment on OpenML EEG Eye State: one stratified 80/20 split; "
+        "method": "Stand-in experiment on EEG Eye State: one stratified 80/20 split; "
                   "random forest baseline vs. class-balanced, CV-tuned, isotonic-calibrated LightGBM; "
                   "test set used only for final scoring.",
         "dataset": {
             "name": "EEG Eye State (OpenML 1471)", "source_url": source_url,
+            "data_source": source,
             "n_rows": int(len(y)), "n_train": int(len(y_tr)), "n_test": int(len(y_te)),
             "same_as_paper": False, "baseline_is_papers_method": False,
         },
@@ -144,7 +172,9 @@ def main():
                  "Results are for a single split. LightGBM with default row/column sampling is nearly "
                  "deterministic, so its seed std is near zero. Raw features are used for both models; "
                  "EEG readings contain known amplitude outliers that tree models tolerate. "
-                 "Secondary metrics are computed on the same test split and were not used for selection.",
+                 "Secondary metrics are computed on the same test split and were not used for selection. "
+                 f"Data was loaded from '{source}'; if OpenML was unavailable (HTTP 412 in CI), the "
+                 "same EEG Eye State data was fetched from the UCI ML Repository (id 264).",
     }
     with open("results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
